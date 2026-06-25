@@ -5,6 +5,9 @@ from typing import List, Dict, Any
 from datetime import datetime
 import pandas as pd
 import random
+import urllib.request
+import urllib.error
+import xml.etree.ElementTree as ET
 
 app = FastAPI(title="InfraPredict Backend API")
 
@@ -19,9 +22,13 @@ app.add_middleware(
 
 # Mock in-memory database
 db_assets = [
-    {"id": "bridge-01", "name": "Golden Gate Bridge", "type": "bridge", "location": {"lat": 37.8199, "lng": -122.4783}, "health": 100},
-    {"id": "pipe-01", "name": "Main Water Line A", "type": "pipeline", "location": {"lat": 37.7749, "lng": -122.4194}, "health": 100},
-    {"id": "power-01", "name": "High Voltage Line 1", "type": "powerline", "location": {"lat": 37.3382, "lng": -121.8863}, "health": 100},
+    {"id": "bridge-mumbai", "name": "Bandra-Worli Sea Link", "type": "bridge", "location": {"lat": 19.0356, "lng": 72.8164}, "health": 100},
+    {"id": "bridge-chenab", "name": "Chenab Bridge", "type": "bridge", "location": {"lat": 33.1519, "lng": 74.8821}, "health": 100},
+    {"id": "dam-bhakra", "name": "Bhakra Nangal Dam", "type": "powerline", "location": {"lat": 31.4114, "lng": 76.3268}, "health": 100},
+    {"id": "statue-unity", "name": "Statue of Unity", "type": "building", "location": {"lat": 21.8380, "lng": 73.7191}, "health": 100},
+    {"id": "bridge-kinnaur", "name": "Bailey Bridge, Kinnaur", "type": "bridge", "location": {"lat": 31.5363, "lng": 78.2618}, "health": 100},
+    {"id": "bridge-gg", "name": "Golden Gate Bridge", "type": "bridge", "location": {"lat": 37.8199, "lng": -122.4783}, "health": 100},
+    {"id": "bridge-sydney", "name": "Sydney Harbour Bridge", "type": "bridge", "location": {"lat": -33.8523, "lng": 151.2108}, "health": 100},
 ]
 db_sensor_readings: Dict[str, List[Dict[str, Any]]] = {asset["id"]: [] for asset in db_assets}
 db_alerts: List[Dict[str, Any]] = []
@@ -104,6 +111,34 @@ async def get_asset_sensors(asset_id: str, limit: int = 20):
 @app.get("/api/alerts")
 async def get_alerts(limit: int = 10):
     return {"alerts": db_alerts[:limit]}
+
+cached_news = []
+last_news_fetch = 0
+
+@app.get("/api/news")
+def get_news():
+    global cached_news, last_news_fetch
+    now = datetime.utcnow().timestamp()
+    
+    # Fetch news at most once every 5 minutes (300 seconds)
+    if now - last_news_fetch > 300 or not cached_news:
+        try:
+            url = 'https://news.google.com/rss/search?q=bridge+collapse+OR+infrastructure+crash+India+2026&hl=en-IN&gl=IN&ceid=IN:en'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            res = urllib.request.urlopen(req, timeout=5).read()
+            root = ET.fromstring(res)
+            headlines = []
+            for item in root.findall('.//item')[:15]:
+                title = item.find('title').text if item.find('title') is not None else "No Title"
+                link = item.find('link').text if item.find('link') is not None else "#"
+                headlines.append({"title": title, "link": link})
+            if headlines:
+                cached_news = headlines
+                last_news_fetch = now
+        except Exception as e:
+            print(f"Error fetching news: {e}")
+            
+    return {"news": cached_news}
 
 @app.get("/api/health")
 async def health_check():
