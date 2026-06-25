@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+}
+
+body {
+  @apply bg-white text-slate-600 dark:bg-slate-950 dark:text-slate-400 font-sans;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+@keyframes health-bar-enter {
+  from { width: 0%; }
+  to { width: var(--target-width); }
+}
+
+@keyframes slide-in-alert {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes map-ring-expand {
+  0% { r: 10; opacity: 0.6; }
+  100% { r: 22; opacity: 0; }
+}
+
+.alert-new {
+  animation: slide-in-alert 0.2s ease forwards;
+}
+
+.health-bar {
+  transition: width 0.5s ease, background-color 0.3s ease;
+}
+
+.map-ring-pulse {
+  animation: map-ring-expand 2s infinite;
+  transform-origin: center;
+}
