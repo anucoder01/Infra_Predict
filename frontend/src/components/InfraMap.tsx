@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import { Asset, SensorData } from '../hooks/useInfraData';
 
-const MAP_CENTER: [number, number] = [37.7749, -122.4194];
-const ZOOM = 13;
+const MAP_CENTER: [number, number] = [20.0, 0.0];
+const ZOOM = 3;
 
 interface InfraMapProps {
   assets: Asset[];

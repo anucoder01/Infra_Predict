@@ -42,3 +42,12 @@ body {
   animation: map-ring-expand 2s infinite;
   transform-origin: center;
 }
+
+@keyframes marquee {
+  0% { transform: translateX(100vw); }
+  100% { transform: translateX(-100%); }
+}
+
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+}
