@@ -7,6 +7,8 @@ import AssetPanel from '../components/AssetPanel';
 import RightPanel from '../components/RightPanel';
 import { useInfraData, SensorData } from '../hooks/useInfraData';
 
+import NewsTicker from '../components/NewsTicker';
+
 const InfraMap = dynamic(() => import('../components/InfraMap'), { ssr: false });
 
 export default function Dashboard() {
@@ -30,7 +32,7 @@ export default function Dashboard() {
     <div className="flex flex-col h-screen w-full overflow-hidden bg-white dark:bg-slate-950 font-sans">
       {/* SECTION 1: TOPBAR */}
       <Topbar alertCount={highSeverityCount} />
-
+      
       {/* MAIN CONTENT AREA */}
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         
@@ -66,6 +68,9 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* NEWS TICKER (Fixed Bottom) */}
+      <NewsTicker />
     </div>
   );
 }
