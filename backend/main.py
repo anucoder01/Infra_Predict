@@ -15,6 +15,8 @@ from backend.shm_engine.benchmark_loader import load_acceleration_csv
 from backend.shm_engine.structural_physics import StructuralDynamicsSimulator
 from backend.shm_engine.dsp import compute_power_spectral_density, extract_modal_peaks, compute_stiffness_retention, temperature_compensate_frequency
 from backend.vision import inspect_image
+from backend.storage import TelemetryStore
+from backend.mqtt_ingest import start_mqtt_listener
 
 app = FastAPI(
     title="InfraPredict Structural Health Monitoring (SHM) API",
@@ -29,6 +31,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_mqtt():
+    start_mqtt_listener()
 
 # Global SHM Physics & Telemetry Engine
 shm_simulator = StructuralDynamicsSimulator()
@@ -50,6 +56,7 @@ db_assets = [
 ]
 
 # Initialize sensor readings lazily
+store = TelemetryStore()
 db_sensor_readings: Dict[str, List[Dict[str, Any]]] = {asset["id"]: [] for asset in db_assets}
 db_alerts: List[Dict[str, Any]] = []
 
@@ -66,6 +73,7 @@ def ensure_initial_readings(asset_id: str, count: int = 15):
                 "prediction": reading["prediction"],
                 "provenance": "synthetic_simulation"
             })
+            store.add_reading(db_sensor_readings[asset_id][-1])
 
 class SensorData(BaseModel):
     acoustic_db: float
@@ -165,9 +173,11 @@ async def ingest_data(payload: IngestPayload):
     prediction = ml_predict_shm(payload.asset_id, payload.sensors)
     reading["prediction"] = prediction
 
+    reading["provenance"] = "device_ingest"
+    store.add_reading(reading)
     db_sensor_readings[payload.asset_id].append(reading)
 
-    # Keep last 100 readings
+    # Keep a short in-process cache; durable history remains in the database.
     if len(db_sensor_readings[payload.asset_id]) > 100:
         db_sensor_readings[payload.asset_id].pop(0)
 
@@ -182,6 +192,7 @@ async def ingest_data(payload: IngestPayload):
             "prediction": prediction
         }
         db_alerts.insert(0, alert)
+        store.add_alert(alert)
 
         # Deduplicate alerts list (max 50)
         if len(db_alerts) > 50:
@@ -213,7 +224,10 @@ async def get_asset_sensors(asset_id: str, limit: int = 30):
     if asset_id not in db_sensor_readings:
         raise HTTPException(status_code=404, detail="Asset not found")
     ensure_initial_readings(asset_id, count=15)
-    readings = db_sensor_readings[asset_id][-limit:]
+    readings = store.readings(asset_id, max(1, min(limit, 500)))
+    if not readings:
+        ensure_initial_readings(asset_id, count=15)
+        readings = store.readings(asset_id, max(1, min(limit, 500)))
     return {"readings": readings}
 
 @app.get("/api/infrastructure/{asset_id}/spectrum")
@@ -337,6 +351,7 @@ async def inject_damage(payload: DamageInjectionRequest):
         "provenance": "synthetic_simulation"
     }
     db_sensor_readings[payload.asset_id].append(reading_entry)
+    store.add_reading(reading_entry)
 
     # Trigger alert if damaged
     if prediction["is_anomaly"]:
@@ -349,6 +364,7 @@ async def inject_damage(payload: DamageInjectionRequest):
             "prediction": prediction
         }
         db_alerts.insert(0, alert)
+        store.add_alert(alert)
 
         for asset in db_assets:
             if asset["id"] == payload.asset_id:
@@ -370,7 +386,7 @@ async def inject_damage(payload: DamageInjectionRequest):
 
 @app.get("/api/alerts")
 async def get_alerts(limit: int = 15):
-    return {"alerts": db_alerts[:limit]}
+    return {"alerts": store.alerts(max(1, min(limit, 100)))}
 
 cached_news = []
 last_news_fetch = 0

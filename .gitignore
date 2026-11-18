@@ -1,0 +1,8 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Local telemetry databases
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
