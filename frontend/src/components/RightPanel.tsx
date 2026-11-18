@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, Asset, SensorData, Reading, SpectralData } from '../hooks/useInfraData';
-import { AlertTriangle, CheckCircle2, Activity, Zap, Play, RotateCcw, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Activity, Zap, Play, RotateCcw, Upload, FileDown, ClipboardPlus } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, ReferenceLine, YAxis, XAxis, Tooltip, AreaChart, Area } from 'recharts';
 
 interface RightPanelProps {
@@ -30,6 +30,15 @@ export default function RightPanel({
   const [inspectionResult, setInspectionResult] = useState<any>(null);
   const [inspectionError, setInspectionError] = useState('');
   const [isInspecting, setIsInspecting] = useState(false);
+  const [ticketTitle, setTicketTitle] = useState('');
+  const [ticketAssignee, setTicketAssignee] = useState('');
+  const [ticketMessage, setTicketMessage] = useState('');
+  const [isCreatingTicket, setIsCreatingTicket] = useState(false);
+  const [maintenanceTickets, setMaintenanceTickets] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    fetch('http://localhost:8001/api/tickets').then(response => response.ok ? response.json() : { tickets: [] }).then(data => setMaintenanceTickets(data.tickets || [])).catch(() => setMaintenanceTickets([]));
+  }, [ticketMessage]);
 
   // Sort alerts: high severity first, then newest first
   const sortedAlerts = [...alerts].sort((a, b) => {
@@ -227,6 +236,26 @@ export default function RightPanel({
                       ))}
                     </div>
                   </div>
+                </div>
+
+                {/* Maintenance actions */}
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-200 dark:border-slate-700/40">
+                  <div className="flex items-center gap-1 mb-2"><ClipboardPlus size={14} className="text-emerald-500" /><span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">Maintenance Workflow</span></div>
+                  <a className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold ${activeAsset ? 'bg-blue-600 text-white' : 'bg-slate-300 text-slate-500 pointer-events-none'}`} href={activeAsset ? `http://localhost:8001/api/infrastructure/${activeAsset}/report.pdf` : undefined} target="_blank" rel="noreferrer"><FileDown size={12} /> Download PDF report</a>
+                  <input value={ticketTitle} onChange={e => setTicketTitle(e.target.value)} placeholder="Ticket summary" className="w-full mt-2 px-2 py-1 text-[10px] rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
+                  <input value={ticketAssignee} onChange={e => setTicketAssignee(e.target.value)} placeholder="Assign to (team or email)" className="w-full mt-1 px-2 py-1 text-[10px] rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900" />
+                  <button disabled={!activeAsset || !ticketTitle.trim() || isCreatingTicket} onClick={async () => {
+                    if (!activeAsset || !ticketTitle.trim()) return;
+                    setIsCreatingTicket(true); setTicketMessage('');
+                    try {
+                      const response = await fetch('http://localhost:8001/api/tickets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asset_id: activeAsset, title: ticketTitle, assigned_to: ticketAssignee, priority: activeSensors && activeSensors.stiffness_retention_pct !== undefined && activeSensors.stiffness_retention_pct < 75 ? 'high' : 'medium', description: activeSensors ? `Current stiffness retention: ${activeSensors.stiffness_retention_pct ?? 'n/a'}%; microstrain: ${activeSensors.microstrain_ue ?? 'n/a'} ??` : '' }) });
+                      if (!response.ok) throw new Error((await response.json()).detail || 'Ticket could not be created');
+                      const ticket = await response.json(); setTicketMessage(`Created ${ticket.id}`); setTicketTitle('');
+                    } catch (error) { setTicketMessage(error instanceof Error ? error.message : 'Ticket could not be created'); }
+                    finally { setIsCreatingTicket(false); }
+                  }} className="w-full mt-2 px-2 py-1 rounded bg-emerald-600 disabled:bg-slate-400 text-white text-[10px] font-semibold">{isCreatingTicket ? 'Creating?' : 'Dispatch maintenance ticket'}</button>
+                  {ticketMessage && <div className="text-[10px] text-slate-500 mt-1">{ticketMessage}</div>}
+                  {maintenanceTickets.slice(0, 3).map((ticket: any) => <div key={ticket.id} className="flex items-center justify-between mt-1 text-[9px] text-slate-500"><span className="truncate pr-1">{ticket.title}{ticket.assigned_to ? ` ? ${ticket.assigned_to}` : ''}</span><select aria-label={`Status for ${ticket.title}`} value={ticket.status} onChange={async event => { const status = event.target.value; const response = await fetch(`http://localhost:8001/api/tickets/${ticket.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }); if (response.ok) { const updated = await response.json(); setMaintenanceTickets(current => current.map(item => item.id === updated.id ? updated : item)); } }} className="bg-transparent"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option></select></div>)}
                 </div>
 
                 {/* Uploaded bridge photo inspection */}

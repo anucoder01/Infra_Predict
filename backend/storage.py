@@ -36,10 +36,12 @@ class TelemetryStore:
                 conn.execute("CREATE TABLE IF NOT EXISTS telemetry (id BIGSERIAL PRIMARY KEY, asset_id TEXT NOT NULL, timestamp TEXT NOT NULL, payload JSONB NOT NULL)")
                 conn.execute("CREATE INDEX IF NOT EXISTS telemetry_asset_time ON telemetry(asset_id, timestamp DESC)")
                 conn.execute("CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, payload JSONB NOT NULL)")
+                conn.execute("CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload JSONB NOT NULL)")
             else:
                 conn.execute("CREATE TABLE IF NOT EXISTS telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id TEXT NOT NULL, timestamp TEXT NOT NULL, payload TEXT NOT NULL)")
                 conn.execute("CREATE INDEX IF NOT EXISTS telemetry_asset_time ON telemetry(asset_id, timestamp DESC)")
                 conn.execute("CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, payload TEXT NOT NULL)")
+                conn.execute("CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)")
 
     def add_reading(self, reading: dict[str, Any]) -> None:
         with self._connect() as conn:
@@ -62,4 +64,19 @@ class TelemetryStore:
     def alerts(self, limit: int = 15) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(f"SELECT payload FROM alerts ORDER BY timestamp DESC LIMIT {int(limit)}").fetchall()
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in rows]
+
+    def add_ticket(self, ticket: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            marker = "%s" if self._postgres else "?"
+            conn.execute(f"INSERT INTO tickets(id,created_at,updated_at,payload) VALUES ({marker},{marker},{marker},{marker})", (ticket["id"], ticket["created_at"], ticket["updated_at"], json.dumps(ticket)))
+
+    def update_ticket(self, ticket: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            marker = "%s" if self._postgres else "?"
+            conn.execute(f"UPDATE tickets SET updated_at={marker}, payload={marker} WHERE id={marker}", (ticket["updated_at"], json.dumps(ticket), ticket["id"]))
+
+    def tickets(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT payload FROM tickets ORDER BY created_at DESC LIMIT {int(limit)}").fetchall()
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in rows]

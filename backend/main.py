@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -103,6 +104,17 @@ class BenchmarkAnalysisRequest(BaseModel):
     csv_path: str
     sampling_rate_hz: float
     column: Optional[str] = None
+
+class TicketCreateRequest(BaseModel):
+    asset_id: str
+    title: str
+    description: str = ""
+    priority: str = "medium"
+    assigned_to: str = ""
+
+class TicketUpdateRequest(BaseModel):
+    status: str
+    assigned_to: Optional[str] = None
 
 def ml_predict_shm(asset_id: str, sensors: SensorData) -> Dict[str, Any]:
     """
@@ -420,6 +432,65 @@ def get_news():
             last_news_fetch = now
 
     return {"news": cached_news}
+
+@app.get("/api/infrastructure/{asset_id}/report.pdf")
+async def inspection_report(asset_id: str):
+    if asset_id not in db_sensor_readings:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Install backend/requirements.txt to enable PDF reports") from exc
+    from io import BytesIO
+    asset = next(item for item in db_assets if item["id"] == asset_id)
+    readings = store.readings(asset_id, 100)
+    latest = readings[-1] if readings else None
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    pdf.setTitle(f"Inspection Report - {asset['name']}")
+    pdf.setFont("Helvetica-Bold", 18); pdf.drawString(48, 750, "InfraPredict Inspection Report")
+    pdf.setFont("Helvetica", 11)
+    lines = [f"Asset: {asset['name']} ({asset_id})", f"Generated: {datetime.utcnow().isoformat()}Z", f"Health score: {asset['health']}%", f"Telemetry records: {len(readings)}"]
+    if latest:
+        sensors = latest.get("sensors", {})
+        prediction = latest.get("prediction", {})
+        lines += [f"Latest reading: {latest.get('timestamp', 'n/a')}", f"Provenance: {latest.get('provenance', 'unknown')}", f"Vibration RMS: {sensors.get('vibration_g', 'n/a')} g", f"Temperature: {sensors.get('thermal_c', 'n/a')} C", f"Dominant frequency: {sensors.get('dominant_freq_hz', 'n/a')} Hz", f"Microstrain: {sensors.get('microstrain_ue', 'n/a')} uE", f"Finding: {prediction.get('severity', 'no prediction')}", f"Failure probability: {prediction.get('failure_probability', 'n/a')}", f"Assessment: {prediction.get('physics_explanation', 'No assessment available')}"]
+    y = 710
+    for line in lines:
+        pdf.drawString(48, y, str(line)[:110]); y -= 22
+        if y < 60: pdf.showPage(); y = 750
+    pdf.save()
+    return Response(buffer.getvalue(), media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=inspection-{asset_id}.pdf"})
+
+@app.get("/api/tickets")
+async def list_tickets():
+    return {"tickets": store.tickets()}
+
+@app.post("/api/tickets")
+async def create_ticket(payload: TicketCreateRequest):
+    if payload.asset_id not in db_sensor_readings:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if payload.priority not in {"low", "medium", "high", "critical"}:
+        raise HTTPException(status_code=400, detail="Invalid priority")
+    now = datetime.utcnow().isoformat() + "Z"
+    ticket = {"id": f"ticket-{int(datetime.utcnow().timestamp())}-{random.randint(1000,9999)}", **payload.dict(), "status": "open", "created_at": now, "updated_at": now}
+    store.add_ticket(ticket)
+    return ticket
+
+@app.patch("/api/tickets/{ticket_id}")
+async def update_ticket(ticket_id: str, payload: TicketUpdateRequest):
+    if payload.status not in {"open", "in_progress", "resolved"}:
+        raise HTTPException(status_code=400, detail="Status must be open, in_progress, or resolved")
+    for ticket in store.tickets(500):
+        if ticket["id"] == ticket_id:
+            ticket["status"] = payload.status
+            if payload.assigned_to is not None:
+                ticket["assigned_to"] = payload.assigned_to
+            ticket["updated_at"] = datetime.utcnow().isoformat() + "Z"
+            store.update_ticket(ticket)
+            return ticket
+    raise HTTPException(status_code=404, detail="Ticket not found")
 
 @app.get("/api/health")
 async def health_check():
