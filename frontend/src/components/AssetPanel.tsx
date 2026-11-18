@@ -81,8 +81,8 @@ export default function AssetPanel({ assets, activeAsset, setActiveAsset, latest
               key={asset.id}
               onClick={() => setActiveAsset(asset.id)}
               className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                isActive 
-                  ? 'border-slate-400 bg-slate-50 dark:border-slate-500 dark:bg-slate-800/50' 
+                isActive
+                  ? 'border-slate-400 bg-slate-50 dark:border-slate-500 dark:bg-slate-800/50'
                   : 'border-slate-200/20 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/30'
               }`}
             >
@@ -94,18 +94,23 @@ export default function AssetPanel({ assets, activeAsset, setActiveAsset, latest
               </div>
 
               {/* Health Label */}
-              <div className="flex justify-end text-[11px] mb-1 font-medium" style={{ color: healthColor(asset.health) }}>
-                {getHealthLabel(asset.health)} {asset.health.toFixed(0)}%
+              <div className="flex justify-between text-[11px] mb-1 font-medium">
+                <span className="text-[10px] text-slate-400">
+                  {sensors?.dominant_freq_hz ? `f₀ ${sensors.dominant_freq_hz.toFixed(2)} Hz` : ''}
+                </span>
+                <span style={{ color: healthColor(asset.health) }}>
+                  {getHealthLabel(asset.health)} {asset.health.toFixed(0)}%
+                </span>
               </div>
 
               {/* Health Bar */}
               <div className="w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full mb-3 overflow-hidden">
-                <div 
-                  className="h-full rounded-full health-bar" 
-                  style={{ 
-                    width: `${asset.health}%`, 
-                    backgroundColor: healthColor(asset.health) 
-                  }} 
+                <div
+                  className="h-full rounded-full health-bar"
+                  style={{
+                    width: `${asset.health}%`,
+                    backgroundColor: healthColor(asset.health)
+                  }}
                 />
               </div>
 

@@ -1,95 +1,78 @@
 import time
 import requests
-import datetime as dt
-from datetime import datetime
+import sys
+import os
 
-# URL of the backend ingestion API
-BACKEND_URL = "http://localhost:8001/api/ingest"
+# Add parent directory to sys.path so simulator can import shm_engine
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# List of mock infrastructure assets
-ASSETS = [
-    {"id": "bridge-mumbai", "type": "bridge", "location": {"lat": 19.0356, "lng": 72.8164}},
-    {"id": "bridge-chenab", "type": "bridge", "location": {"lat": 33.1519, "lng": 74.8821}},
-    {"id": "dam-bhakra", "type": "powerline", "location": {"lat": 31.4114, "lng": 76.3268}},
-    {"id": "statue-unity", "type": "building", "location": {"lat": 21.8380, "lng": 73.7191}},
-    {"id": "bridge-kinnaur", "type": "bridge", "location": {"lat": 31.5363, "lng": 78.2618}},
-    {"id": "bridge-gg", "type": "bridge", "location": {"lat": 37.8199, "lng": -122.4783}},
-    {"id": "bridge-sydney", "type": "bridge", "location": {"lat": -33.8523, "lng": 151.2108}},
-]
+from backend.shm_engine.structural_physics import StructuralDynamicsSimulator
+from backend.shm_engine.benchmark_loader import BENCHMARK_ASSETS, DAMAGE_SCENARIOS
 
-def fetch_weather(lat, lng):
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lng}&current_weather=true"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            data = res.json().get("current_weather", {})
-            return data.get("temperature", 25.0), data.get("windspeed", 10.0)
-    except Exception as e:
-        print(f"Weather API error: {e}")
-    return 25.0, 10.0
-
-def fetch_earthquake(lat, lng):
-    try:
-        start_time_iso = (dt.datetime.utcnow() - dt.timedelta(days=1)).isoformat()
-        end_time_iso = dt.datetime.utcnow().isoformat()
-        url = f"https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime={start_time_iso}&endtime={end_time_iso}&latitude={lat}&longitude={lng}&maxradiuskm=500"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            features = res.json().get("features", [])
-            if features:
-                max_mag = max((f.get("properties", {}).get("mag", 0) for f in features), default=0)
-                if max_mag and max_mag > 0:
-                    return max_mag
-    except Exception as e:
-        print(f"USGS API error: {e}")
-    return 0.0
-
-def generate_sensor_data(asset):
-    lat = asset["location"]["lat"]
-    lng = asset["location"]["lng"]
-
-    temperature, windspeed = fetch_weather(lat, lng)
-    earthquake_mag = fetch_earthquake(lat, lng)
-
-    # Derive acoustic from windspeed
-    acoustic = 40.0 + windspeed * 1.5
-    
-    # Derive vibration from earthquake magnitude or use baseline
-    vibration = 0.05
-    if earthquake_mag > 0:
-        vibration = 0.05 + (earthquake_mag / 10.0)
-
-    # Thermal matches temperature
-    thermal = temperature
-
-    return {
-        "asset_id": asset["id"],
-        "timestamp": datetime.utcnow().isoformat(),
-        "sensors": {
-            "acoustic_db": round(acoustic, 2),
-            "vibration_g": round(vibration, 3),
-            "thermal_c": round(thermal, 2)
-        },
-        "drone_image_url": f"https://mock-drone-images.com/{asset['id']}/{int(time.time())}.jpg"
-    }
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8001/api/ingest")
 
 def main():
-    print(f"Starting real-world sensor data fetcher. Sending to {BACKEND_URL}")
+    print("=" * 70)
+    print("🚀 InfraPredict SHM Telemetry Simulator v2.0 (Phase 1 Engine)")
+    print("   Streaming multi-modal structural dynamics: Modal Vibration (FFT),")
+    print("   Microstrain (uE), Acoustic Emission, and Thermal Decoupling.")
+    print("=" * 70)
+    print(f"Target Ingestion API: {BACKEND_URL}")
+    print(f"Monitored Benchmark Assets: {[a['id'] for a in BENCHMARK_ASSETS]}")
+
+    sim = StructuralDynamicsSimulator()
+    step_counter = 0
+
     while True:
-        for asset in ASSETS:
-            payload = generate_sensor_data(asset)
+        step_counter += 1
+
+        # Periodic demonstration of realistic scenario events:
+        # Every 25 steps (~2.5 minutes), introduce an overload event or minor damage on Z24
+        if step_counter == 10:
+            print("\n[SCENARIO EVENT] Simulating Pier Subsidence (10mm) on bridge-z24...")
+            sim.set_damage_scenario("bridge-z24", "pier_settlement_10mm")
+        elif step_counter == 25:
+            print("\n[SCENARIO EVENT] Simulating Concrete Fatigue Shear Cracking on bridge-z24...")
+            sim.set_damage_scenario("bridge-z24", "concrete_fatigue_crack")
+        elif step_counter == 45:
+            print("\n[SCENARIO EVENT] Maintenance Crew Remediated bridge-z24 -> Resetting to Undamaged Baseline.")
+            sim.set_damage_scenario("bridge-z24", "normal")
+            step_counter = 0
+
+        for asset in BENCHMARK_ASSETS:
+            asset_id = asset["id"]
+            telemetry = sim.generate_telemetry_batch(asset_id, n_samples=64)
+
+            payload = {
+                "asset_id": asset_id,
+                "timestamp": telemetry["timestamp"],
+                "sensors": telemetry["sensors"],
+                "drone_image_url": f"https://mock-drone-images.com/{asset_id}/{int(time.time())}.jpg",
+                "raw_accel_waveform": telemetry["raw_accel_waveform"],
+                "scenario": telemetry["scenario"]
+            }
+
             try:
-                response = requests.post(BACKEND_URL, json=payload)
+                response = requests.post(BACKEND_URL, json=payload, timeout=3)
                 if response.status_code == 200:
-                    print(f"[{payload['timestamp']}] Successfully sent data for {asset['id']}")
+                    pred = response.json().get("prediction", {})
+                    status_flag = "⚠️ ANOMALY" if pred.get("is_anomaly") else "✅ OK"
+                    f0 = telemetry["sensors"]["dominant_freq_hz"]
+                    stiffness = telemetry["sensors"]["stiffness_retention_pct"]
+                    strain = telemetry["sensors"]["microstrain_ue"]
+
+                    print(
+                        f"[{telemetry['timestamp'][11:19]}] {asset_id:<15} | "
+                        f"f₀: {f0:4.2f}Hz | K: {stiffness:5.1f}% | Strain: {strain:5.0f}uE | "
+                        f"{status_flag} (FailProb: {pred.get('failure_probability', 0)*100:.0f}%)"
+                    )
                 else:
-                    print(f"[{payload['timestamp']}] Failed to send data for {asset['id']}: {response.status_code}")
-            except Exception as e:
-                print(f"[{payload['timestamp']}] Connection error: {e}")
-        
-        # Sleep for a bit before next batch, real data updates less frequently so 10s is fine, 
-        # but keep it at 10s to avoid hammering public APIs too fast compared to mock.
-        time.sleep(10)
+                    print(f"[{telemetry['timestamp'][11:19]}] HTTP {response.status_code} for {asset_id}")
+            except requests.exceptions.RequestException as e:
+                print(f"[{telemetry['timestamp'][11:19]}] Ingestion unreachable for {asset_id}: {e.__class__.__name__}")
+
+        # Stream cycle pause: 3 seconds for responsive live telemetry
+        time.sleep(3.0)
 
 if __name__ == "__main__":
     main()
