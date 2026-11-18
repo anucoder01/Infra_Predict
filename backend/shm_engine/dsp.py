@@ -56,27 +56,32 @@ def extract_modal_peaks(
 
     max_p = np.max(valid_psd)
     threshold = max_p * 0.08
+    local_maxima = [
+        i for i in range(1, len(valid_psd) - 1)
+        if valid_psd[i] > valid_psd[i - 1]
+        and valid_psd[i] >= valid_psd[i + 1]
+        and valid_psd[i] >= threshold
+    ]
+    if not local_maxima:
+        local_maxima = [int(np.argmax(valid_psd))]
 
-    peaks = []
-    # Identify local maxima
-    for i in range(1, len(valid_psd) - 1):
-        if valid_psd[i] > valid_psd[i - 1] and valid_psd[i] > valid_psd[i + 1]:
-            if valid_psd[i] >= threshold:
-                peaks.append({
-                    "frequency_hz": round(float(valid_freqs[i]), 2),
-                    "power": round(float(valid_psd[i]), 6)
-                })
+    # Keep distinct frequency modes, ranked by power, not adjacent FFT bins.
+    local_maxima.sort(key=lambda i: valid_psd[i], reverse=True)
+    selected = []
+    min_spacing_hz = max(0.15, (freqs[1] - freqs[0]) * 2) if len(freqs) > 1 else 0.15
+    for idx in local_maxima:
+        frequency = float(valid_freqs[idx])
+        if any(abs(frequency - previous) < min_spacing_hz for previous in selected):
+            continue
+        selected.append(frequency)
+        if len(selected) >= max_peaks:
+            break
 
-    # If no local maxima exceed threshold, return peak maximum
-    if not peaks:
-        top_idx = int(np.argmax(valid_psd))
-        peaks.append({
-            "frequency_hz": round(float(valid_freqs[top_idx]), 2),
-            "power": round(float(valid_psd[top_idx]), 6)
-        })
-
-    # Sort by power descending and keep top N
-    peaks.sort(key=lambda x: x["power"], reverse=True)
+    peaks = [
+        {"frequency_hz": round(float(valid_freqs[i]), 2), "power": round(float(valid_psd[i]), 6)}
+        for i in local_maxima
+        if float(valid_freqs[i]) in selected
+    ]
     return peaks[:max_peaks]
 
 def compute_stiffness_retention(

@@ -1,5 +1,7 @@
 import numpy as np
 from typing import Dict, Any, List
+import csv
+import os
 
 # Standard Structural Health Monitoring (SHM) Benchmark Profiles
 # Grounded in real civil engineering benchmarks (such as the Swiss Z24 Bridge and LANL frame tests)
@@ -167,3 +169,36 @@ DAMAGE_SCENARIOS = {
         "severity": "high"
     }
 }
+
+
+def load_acceleration_csv(path: str, sampling_rate: float, column: str = "") -> Dict[str, Any]:
+    """Load measured acceleration samples from a CSV file for real FFT analysis.
+
+    The source must be a CSV in the user-provided path (for example, an exported
+    Z24 or LANL channel). No benchmark measurements are bundled with this repo.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Benchmark CSV not found: {path}")
+    samples = []
+    with open(path, newline="", encoding="utf-8-sig") as source:
+        reader = csv.DictReader(source)
+        if not reader.fieldnames:
+            raise ValueError("Benchmark CSV must include a header row")
+        selected_column = column or reader.fieldnames[0]
+        if selected_column not in reader.fieldnames:
+            raise ValueError(f"Column '{selected_column}' not found in CSV")
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                samples.append(float(row[selected_column]))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid numeric sample in row {row_number}") from exc
+    if len(samples) < 16:
+        raise ValueError("At least 16 acceleration samples are required")
+    return {
+        "samples": samples,
+        "sampling_rate_hz": sampling_rate,
+        "source": os.path.basename(path),
+        "channel": selected_column,
+        "sample_count": len(samples),
+        "provenance": "user_supplied_measured_csv",
+    }

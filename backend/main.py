@@ -9,8 +9,9 @@ import urllib.error
 import xml.etree.ElementTree as ET
 
 from backend.shm_engine.benchmark_loader import BENCHMARK_ASSETS, DAMAGE_SCENARIOS
+from backend.shm_engine.benchmark_loader import load_acceleration_csv
 from backend.shm_engine.structural_physics import StructuralDynamicsSimulator
-from backend.shm_engine.dsp import compute_stiffness_retention, temperature_compensate_frequency
+from backend.shm_engine.dsp import compute_power_spectral_density, extract_modal_peaks, compute_stiffness_retention, temperature_compensate_frequency
 
 app = FastAPI(
     title="InfraPredict Structural Health Monitoring (SHM) API",
@@ -58,8 +59,9 @@ def ensure_initial_readings(asset_id: str, count: int = 15):
                 "asset_id": asset_id,
                 "timestamp": reading["timestamp"],
                 "sensors": reading["sensors"],
-                "drone_image_url": f"https://mock-drone-images.com/{asset_id}/frame.jpg",
-                "prediction": reading["prediction"]
+                "drone_image_url": "",
+                "prediction": reading["prediction"],
+                "provenance": "synthetic_simulation"
             })
 
 class SensorData(BaseModel):
@@ -85,6 +87,11 @@ class IngestPayload(BaseModel):
 class DamageInjectionRequest(BaseModel):
     asset_id: str
     scenario_key: str
+
+class BenchmarkAnalysisRequest(BaseModel):
+    csv_path: str
+    sampling_rate_hz: float
+    column: Optional[str] = None
 
 def ml_predict_shm(asset_id: str, sensors: SensorData) -> Dict[str, Any]:
     """
@@ -237,6 +244,7 @@ async def get_modal_analysis(asset_id: str):
     return {
         "asset_id": asset_id,
         "asset_name": asset["name"] if asset else asset_id,
+        "telemetry_provenance": latest_reading.get("provenance", "synthetic_simulation") if latest_reading else "synthetic_simulation",
         "current_scenario": scenario_info,
         "latest_sensors": latest_reading["sensors"] if latest_reading else None,
         "prediction": latest_reading.get("prediction") if latest_reading else None,
@@ -249,6 +257,31 @@ async def list_benchmark_scenarios():
     Returns all real-world structural damage injection scenarios available for benchmarking.
     """
     return {"scenarios": DAMAGE_SCENARIOS}
+
+@app.post("/api/benchmark/analyze_csv")
+async def analyze_benchmark_csv(payload: BenchmarkAnalysisRequest):
+    """Run FFT modal peak analysis on a measured acceleration CSV supplied by the operator."""
+    if payload.sampling_rate_hz <= 0:
+        raise HTTPException(status_code=400, detail="sampling_rate_hz must be positive")
+    try:
+        data = load_acceleration_csv(payload.csv_path, payload.sampling_rate_hz, payload.column or "")
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    freqs, psd = compute_power_spectral_density(data["samples"], data["sampling_rate_hz"])
+    peaks = extract_modal_peaks(freqs, psd, max_peaks=5)
+    stride = max(1, len(freqs) // 100)
+    return {
+        "source": data["source"],
+        "channel": data["channel"],
+        "sample_count": data["sample_count"],
+        "sampling_rate_hz": data["sampling_rate_hz"],
+        "provenance": data["provenance"],
+        "detected_peaks": peaks,
+        "spectrum_points": [
+            {"freq": round(float(freqs[i]), 4), "psd": round(float(psd[i]), 8)}
+            for i in range(0, len(freqs), stride)
+        ],
+    }
 
 @app.post("/api/benchmark/inject_damage")
 async def inject_damage(payload: DamageInjectionRequest):
@@ -271,8 +304,9 @@ async def inject_damage(payload: DamageInjectionRequest):
         "asset_id": payload.asset_id,
         "timestamp": new_reading["timestamp"],
         "sensors": new_reading["sensors"],
-        "drone_image_url": f"https://mock-drone-images.com/{payload.asset_id}/frame.jpg",
-        "prediction": prediction
+        "drone_image_url": "",
+        "prediction": prediction,
+        "provenance": "synthetic_simulation"
     }
     db_sensor_readings[payload.asset_id].append(reading_entry)
 
