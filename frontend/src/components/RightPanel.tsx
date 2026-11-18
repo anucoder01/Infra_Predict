@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, Asset, SensorData, Reading, SpectralData } from '../hooks/useInfraData';
-import { AlertTriangle, CheckCircle2, Activity, Zap, Play, RotateCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Activity, Zap, Play, RotateCcw, Upload } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, ReferenceLine, YAxis, XAxis, Tooltip, AreaChart, Area } from 'recharts';
 
 interface RightPanelProps {
@@ -27,6 +27,9 @@ export default function RightPanel({
   const [tab, setTab] = useState<'alerts' | 'telemetry' | 'spectral'>('spectral');
   const [selectedScenario, setSelectedScenario] = useState<string>('normal');
   const [isInjecting, setIsInjecting] = useState<boolean>(false);
+  const [inspectionResult, setInspectionResult] = useState<any>(null);
+  const [inspectionError, setInspectionError] = useState('');
+  const [isInspecting, setIsInspecting] = useState(false);
 
   // Sort alerts: high severity first, then newest first
   const sortedAlerts = [...alerts].sort((a, b) => {
@@ -224,6 +227,31 @@ export default function RightPanel({
                       ))}
                     </div>
                   </div>
+                </div>
+
+                {/* Uploaded bridge photo inspection */}
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-200 dark:border-slate-700/40">
+                  <div className="flex items-center gap-1 mb-1.5">
+                    <Upload size={14} className="text-blue-500" />
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">Drone Photo Inspection</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mb-2">Runs the configured YOLOv8-seg ONNX model. Configure INFRAPREDICT_VISION_MODEL on the API server.</p>
+                  <input type="file" accept="image/*" disabled={!activeAsset || isInspecting} className="w-full text-[10px]" onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file || !activeAsset) return;
+                    setIsInspecting(true); setInspectionError(''); setInspectionResult(null);
+                    const body = new FormData(); body.append('asset_id', activeAsset); body.append('image', file);
+                    try {
+                      const response = await fetch('http://localhost:8001/api/inspection/analyze', { method: 'POST', body });
+                      const result = await response.json();
+                      if (!response.ok) throw new Error(result.detail || 'Image inspection failed');
+                      setInspectionResult(result);
+                    } catch (error) { setInspectionError(error instanceof Error ? error.message : 'Image inspection failed'); }
+                    finally { setIsInspecting(false); event.target.value = ''; }
+                  }} />
+                  {isInspecting && <div className="text-[10px] text-blue-500 mt-2">Analyzing image?</div>}
+                  {inspectionError && <div className="text-[10px] text-amber-600 mt-2">{inspectionError}</div>}
+                  {inspectionResult && <div className="text-[10px] text-slate-600 dark:text-slate-300 mt-2">{inspectionResult.detections.length} defects detected: {inspectionResult.detections.map((d: any) => `${d.class_name} (${Math.round(d.confidence * 100)}%)`).join(', ') || 'none'}<div>Model: {inspectionResult.model}</div></div>}
                 </div>
 
                 {/* Benchmark Damage Scenario Injector */}

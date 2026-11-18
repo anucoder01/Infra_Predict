@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import random
+import os
+import tempfile
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
@@ -12,6 +14,7 @@ from backend.shm_engine.benchmark_loader import BENCHMARK_ASSETS, DAMAGE_SCENARI
 from backend.shm_engine.benchmark_loader import load_acceleration_csv
 from backend.shm_engine.structural_physics import StructuralDynamicsSimulator
 from backend.shm_engine.dsp import compute_power_spectral_density, extract_modal_peaks, compute_stiffness_retention, temperature_compensate_frequency
+from backend.vision import inspect_image
 
 app = FastAPI(
     title="InfraPredict Structural Health Monitoring (SHM) API",
@@ -257,6 +260,31 @@ async def list_benchmark_scenarios():
     Returns all real-world structural damage injection scenarios available for benchmarking.
     """
     return {"scenarios": DAMAGE_SCENARIOS}
+
+@app.post("/api/inspection/analyze")
+async def analyze_inspection_image(asset_id: str = Form(...), image: UploadFile = File(...)):
+    """Inspect an uploaded image with a configured local ONNX segmentation model."""
+    if asset_id not in db_sensor_readings:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    content_type = image.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="Upload must be an image")
+    max_bytes = 12 * 1024 * 1024
+    data = await image.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Image must be 12 MB or smaller")
+    suffix = os.path.splitext(image.filename or "inspection.jpg")[1][:8]
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(data)
+            temp_path = temp_file.name
+        result = inspect_image(temp_path)
+        result.update({"asset_id": asset_id, "filename": image.filename or "inspection"})
+        return result
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 @app.post("/api/benchmark/analyze_csv")
 async def analyze_benchmark_csv(payload: BenchmarkAnalysisRequest):
